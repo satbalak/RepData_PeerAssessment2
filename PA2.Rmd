@@ -1,0 +1,327 @@
+---
+title: "Analyzing Costs (Health and economic) of Natural Disasters using Storm Data"
+author: "Satya Balakrishnan"
+date: "Wednesday, March 18, 2015"
+output: html_document
+---
+
+Storms and other severe weather events can cause both public health and economic problems for communities and municipalities. Many severe events can result in fatalities, injuries, and property damage, and preventing such outcomes to the extent possible is a key concern. We study the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database to address the following 2 questions:
+
+1. Across the United States, which types of events are most harmful with respect to population health?
+2. Across the United States, which types of events have the greatest economic consequences?
+
+After processing and cleaning the Storm Data, we plot 2 graphs in the results showing the events causing maximum impact to population health and economic damage.
+
+#Data Processing
+We first download the NOAA Storm Database and unzip the file. Then we load this file into a data table for further processing
+```{r, message=FALSE, cache=TRUE}
+library(data.table)
+setInternet2(TRUE)
+if (!file.exists("repdata-data-StormData.csv.bz2")) {
+        url <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+        download.file(url, destfile = "./repdata-data-StormData.csv.bz2")
+    }
+#read the 
+rd <- read.table("repdata-data-StormData.csv.bz2", comment.char="", header=TRUE, fill=TRUE,sep=",")
+rd <- data.table(rd)
+```
+
+
+Now, let us look at the data and decipher the columns
+```{r}
+str(rd)
+head(rd)
+tail(rd)
+```
+
+There are 37 columns in this table and the columns that will help us in our analysis are:
+
+* EVTYPE - This contains the Event Type
+* INJURIES - This is the number of Injuries caused by the event. It is a measure of impact on population health
+* FATALITIES - This is the number of Fatalities caused by the event. It is a measure of impact on population health
+* PROPDMG and PROPDMGEXP - The first column contains the numeric value of Property Damage and the second one contains 0 or K or M or B or 0 or 1000 or million or billion. It is a measure of economic consequence of the event. We will explore this below
+* CROPDMG and CROPDMGEXP - The first column contains the numeric value of Crop Damage and the second one contains 0 or K or M or B or 0 or 1000 or million or billion. It is a measure of economic consequence of the event. We will explore this below
+
+Let us look at the questions we are trying to answer again.
+
+1. Across the United States, which types of events are most harmful with respect to population health?
+2. Across the United States, which types of events have the greatest economic consequences?
+
+To answer the first question, let us sum up the data to get total fatalities and injuries that have been caused by the events over the years. 
+
+```{r, message=FALSE}
+library(dplyr)
+library(data.table)
+#Since we need to find the effect of events on population, let us summarize and 
+#get the total FATALITIES and INJURIES that have occured across America over time
+
+sumfi <- summarize(group_by(rd, EVTYPE), sum(FATALITIES, na.rm=T), sum(INJURIES, na.rm=T))
+setnames(sumfi, 2, "FATALITIES")
+setnames(sumfi, 3, "INJURIES")
+
+#Now we eliminate all the events that caused zero fatalities and injuries
+sumfi <- sumfi[sumfi$FATALITIES != 0 & sumfi$INJURIES != 0, ]
+dim(sumfi)
+
+```
+
+We see that we have 985 events and total fatalities and injuries across these 985 events.
+
+Now, let us try to create a similar data structure showing the economic consequences i.e. Property Damage and Crop Damage. But we cannot just sum up the damage values because the damage value needs to be derived based on PROPDMG/PROPDMGEXP and CROPDMG/CROPDMGEXP. Let us see the unique values for PROPDMGEXP and CROPDMGEXP
+
+```{r}
+dmg <- select(rd, EVTYPE, PROPDMG, PROPDMGEXP, CROPDMG, CROPDMGEXP)
+unique(dmg$PROPDMGEXP)
+unique(dmg$CROPDMGEXP)
+```
+
+We see that EXP columns can store 0 or k/K, m/M or b/B for units or thousands or millions or billions. The other values can be ignored as junk. So, we will calculate the actual property damage and crop damage below.
+
+```{r}
+dmg_pb <- dmg[dmg$PROPDMGEXP %in% c("B","b"), ]
+dmg_pm <- dmg[dmg$PROPDMGEXP %in% c("M","m"), ]
+dmg_pk <- dmg[dmg$PROPDMGEXP %in% c("K","k"), ]
+dmg_p0 <- dmg[dmg$PROPDMGEXP %in% c("0"), ]
+
+#now we calculate property damage value
+dmg_pb$PROPDMGVAL <- dmg_pb$PROPDMG*1000000000
+dmg_pm$PROPDMGVAL <- dmg_pm$PROPDMG*1000000
+dmg_pk$PROPDMGVAL <- dmg_pk$PROPDMG*1000
+dmg_p0$PROPDMGVAL <- dmg_p0$PROPDMG*1
+
+dmg_p <- rbind(dmg_pb, dmg_pm, dmg_pk, dmg_p0)
+
+#Now, we do the same to find crop damage value
+dmg_cb <- dmg[dmg$CROPDMGEXP %in% c("B","b"), ]
+dmg_cm <- dmg[dmg$CROPDMGEXP %in% c("M","m"), ]
+dmg_ck <- dmg[dmg$CROPDMGEXP %in% c("K","k"), ]
+dmg_c0 <- dmg[dmg$CROPDMGEXP %in% c("0"), ]
+
+#now we calculate crop damage value
+dmg_cb$CROPDMGVAL <- dmg_cb$PROPDMG*1000000000
+dmg_cm$CROPDMGVAL <- dmg_cm$PROPDMG*1000000
+dmg_ck$CROPDMGVAL <- dmg_ck$PROPDMG*1000
+dmg_c0$CROPDMGVAL <- dmg_c0$PROPDMG*1
+
+dmg_c <- rbind(dmg_cb, dmg_cm, dmg_ck, dmg_c0)
+
+#Now rbind dmg_c and dmg_b
+dmg <- rbind(dmg_p, dmg_c, fill=T)
+
+#Now we sum up the property damage and crop damage by the events
+
+sumdmg <- summarize(group_by(dmg, EVTYPE), sum(CROPDMGVAL, na.rm=T), sum(PROPDMGVAL, na.rm=T))
+setnames(sumdmg, 2, "CROPDMGVAL")
+setnames(sumdmg, 3, "PROPDMGVAL")
+str(sumdmg)
+```
+
+So, now we have 2 data tables
+
+1. sumfi gives the total fatalities and injuries - this will help us calculating the impact of the various events on population health.
+2. sumdmg gives the total property and crop damage - this will help us in calculating the economic consequences of the events
+
+##Cleaning the data
+
+Let us look at the number of events captured in each of these data frames
+
+```{r}
+unique(sumfi$EVTYPE)
+unique(sumdmg$EVTYPE)
+```
+
+We see that the sumfi has 106 events and sumdmg has 430 events. The National Weather Service Storm Data Documentation (https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf) shows the correct event names page 6. We see that we need to do some cleanup of both sumfi and sumdmg.
+
+Let us first try and clean up sumfi. The most ideal approach is to compare every single event type in our data structure and map it to one event name in the documentation. But since we are interested in the events causing most adverse effect, we will take the top 10 fatality causing events and top 10 injury causing events and map only these 20 events to the correct event name in the documentation.
+
+```{r}
+#To arrive at a clean set of top 10 events, let us take the top 15 events
+#that caused the most fatalities
+sumfi_f <- arrange(sumfi, desc(FATALITIES))[1:15, ]
+sumfi_f
+```
+
+We see that we need to get the correct event types, we need to replace the following EVTYPEs:
+
+* HEAT to be replaced with EXCESSIVE HEAT
+* TSTM WIND to replaced with THUNDERSTORM WIND
+* RIP CURRENTS to be replaced with RIP CURRENT
+* HEAT WAVE to be replaced with EXCESSIVE HEAT
+* EXTREME COLD to be replaced with EXTREME COLD/WIND CHILL
+
+So, lets do this now.
+
+```{r}
+sumfi_f$EVTYPE <- as.character(sumfi_f$EVTYPE)
+sumfi_f$EVTYPE[sumfi_f$EVTYPE == "HEAT"] <- "EXCESSIVE HEAT"
+sumfi_f$EVTYPE[sumfi_f$EVTYPE == "TSTM WIND"] <- "THUNDERSTORM WIND"
+sumfi_f$EVTYPE[sumfi_f$EVTYPE == "RIP CURRENTS"] <- "RIP CURRENT"
+sumfi_f$EVTYPE[sumfi_f$EVTYPE == "HEAT WAVE"] <- "EXCESSIVE HEAT"
+sumfi_f$EVTYPE[sumfi_f$EVTYPE == "EXTREME COLD"] <- "EXTREME COLD/WIND CHILL"
+sumfi_f$EVTYPE <- as.factor(sumfi_f$EVTYPE)
+
+#Let us do a sum of the fatalities by EVTYPE
+sumfi_f <- summarize(group_by(sumfi_f, EVTYPE), sum(FATALITIES))
+setnames(sumfi_f, 2, "FATALITIES")
+
+#Now arrange again and get top 10
+sumfi_f <- arrange(sumfi_f, desc(FATALITIES))[1:10, ]
+sumfi_f
+```
+
+We do the same to identify the events causing top 10 injuries. Then we will rbind the top 10 injury causing events. Then we will rbind these 2 data frames.
+
+```{r}
+#To arrive at a clean set of top 10 events, let us take the top 15 events
+#that caused the most fatalities
+sumfi_i <- arrange(sumfi, desc(INJURIES))[1:15, ]
+sumfi_i
+```
+
+We see that we need to get the correct event types, we need to replace the following EVTYPEs:
+
+* TSTM WIND to be replaced with THUNDERSTORM WIND
+* HEAT to be replace with EXCESSIVE HEAT
+* HURRICANE/TYPHOON to be replaced with HURRICANE (TYPHOON)
+
+
+Then we rbind withe FATALITIES causing events. With this, we have a data structure using which we can answer the first question.
+
+```{r}
+sumfi_i$EVTYPE <- as.character(sumfi_i$EVTYPE)
+sumfi_i$EVTYPE[sumfi_i$EVTYPE == "TSTM WIND"] <- "THUNDERSTORM WIND"
+sumfi_i$EVTYPE[sumfi_i$EVTYPE == "HEAT"] <- "EXCESSIVE HEAT"
+sumfi_i$EVTYPE[sumfi_i$EVTYPE == "HURRICANE/TYPHOON"] <- "HURRICANE (TYPHOON)"
+sumfi_i$EVTYPE <- as.factor(sumfi_i$EVTYPE)
+
+#Let us do a sum of the injuries by EVTYPE
+sumfi_i <- summarize(group_by(sumfi_i, EVTYPE), sum(INJURIES))
+setnames(sumfi_i, 2, "INJURIES")
+
+#Now arrange again and get top 10
+sumfi_i <- arrange(sumfi_i, desc(INJURIES))[1:10, ]
+
+
+sumfi <- rbind(sumfi_f, sumfi_i, fill=T)
+sumfi
+```
+
+
+Now, let us clean the sumdmg data structure and get a 20 row data structure just like how we did for FATALITIES/INJURIES.
+
+```{r}
+#To arrive at a clean set of top 10 events, let us take the top 15 events
+#that caused the most property damange
+sumdmg_p <- arrange(sumdmg, desc(PROPDMGVAL))[1:15, ]
+sumdmg_p
+```
+
+We see that we need to get the correct event types, we need to replace the following EVTYPEs:
+
+* HURRICANE/TYPHOON to be replaced with HURRICANE (TYPHOON)
+* STORM SURGE to be replaced with STORM SURGE/TIDE
+* HURRICANE to be replaced with HURRICANE (TYPHOON)
+* RIVER FLOOD to be replaced with FLOOD
+* TSTM WIND to replaced with THUNDERSTORM WIND
+
+```{r}
+sumdmg_p$EVTYPE <- as.character(sumdmg_p$EVTYPE)
+sumdmg_p$EVTYPE[sumdmg_p$EVTYPE == "HURRICANE/TYPHOON"] <- "HURRICANE (TYPHOON)"
+sumdmg_p$EVTYPE[sumdmg_p$EVTYPE == "STORM SURGE"] <- "STORM SURGE/TIDE"
+sumdmg_p$EVTYPE[sumdmg_p$EVTYPE == "HURRICANE"] <- "HURRICANE (TYPHOON)"
+sumdmg_p$EVTYPE[sumdmg_p$EVTYPE == "RIVER FLOOD"] <- "FLOOD"
+sumdmg_p$EVTYPE[sumdmg_p$EVTYPE == "TSTM WIND"] <- "THUNDERSTORM WIND"
+sumdmg_p$EVTYPE <- as.factor(sumdmg_p$EVTYPE)
+
+#Let us do a sum of the fatalities by EVTYPE
+sumdmg_p <- summarize(group_by(sumdmg_p, EVTYPE), sum(PROPDMGVAL))
+setnames(sumdmg_p, 2, "PROPDMGVAL")
+
+#Now arrange again and get top 10
+sumdmg_p <- arrange(sumdmg_p, desc(PROPDMGVAL))[1:10, ]
+sumdmg_p
+
+```
+
+We do the same thing for Crop Damage
+
+```{r}
+#To arrive at a clean set of top 10 events, let us take the top 15 events
+#that caused the most property damange
+sumdmg_c <- arrange(sumdmg, desc(CROPDMGVAL))[1:15, ]
+sumdmg_c
+```
+
+We see that we need to get the correct event types, we need to replace the following EVTYPEs:
+
+* TSTM WIND to replaced with THUNDERSTORM WIND
+* HURRICANE/TYPHOON to be replaced with HURRICANE (TYPHOON)
+* HURRICANE to be replaced with HURRICANE (TYPHOON)
+
+```{r}
+sumdmg_c$EVTYPE <- as.character(sumdmg_c$EVTYPE)
+sumdmg_c$EVTYPE[sumdmg_c$EVTYPE == "TSTM WIND"] <- "THUNDERSTORM WIND"
+sumdmg_c$EVTYPE[sumdmg_c$EVTYPE == "HURRICANE/TYPHOON"] <- "HURRICANE (TYPHOON)"
+sumdmg_c$EVTYPE[sumdmg_c$EVTYPE == "HURRICANE"] <- "HURRICANE (TYPHOON)"
+sumdmg_c$EVTYPE <- as.factor(sumdmg_c$EVTYPE)
+
+#Let us do a sum of the fatalities by EVTYPE
+sumdmg_c <- summarize(group_by(sumdmg_c, EVTYPE), sum(CROPDMGVAL))
+setnames(sumdmg_c, 2, "CROPDMGVAL")
+
+#Now arrange again and get top 10
+sumdmg_c <- arrange(sumdmg_c, desc(CROPDMGVAL))[1:10, ]
+sumdmg_c
+
+```
+
+Now we rbind the top 10 property damage causing events and top 10 crop damage causing events
+
+```{r}
+
+sumdmg <- rbind(sumdmg_p, sumdmg_c, fill=T)
+sumdmg
+```
+
+
+#Results
+
+The first question is:
+
+Across the United States, which types of events are most harmful with respect to population health?
+
+To answer this question, we draw a plot showing the top 10 events that caused that highest fatalities and injuries.
+
+```{r, message=FALSE, warning=FALSE}
+library(ggplot2)
+g <- ggplot(sumfi, aes(EVTYPE)) +
+    geom_point(aes(y = FATALITIES, color="Fatalities")) + 
+    geom_point(aes(y=INJURIES, color="Injuries")) + 
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    ylab("Fatalities/Injuries") +
+    xlab("Event Type") +
+    ggtitle("Events most harmful to population health")
+g
+```
+
+The next question is:
+
+Across the United States, which types of events have the greatest economic consequences?
+
+To answer this question, we draw a plot showing the top 10 events that caused that highest property damage and crop damage.
+
+```{r, message=FALSE, warning=FALSE}
+library(ggplot2)
+#Since the numbers are large, plot in Billions
+sumdmg$PROPDMGVAL <- sumdmg$PROPDMGVAL / 1000000000
+sumdmg$CROPDMGVAL <- sumdmg$CROPDMGVAL / 1000000000
+
+g <- ggplot(sumdmg, aes(EVTYPE)) +
+    geom_point(aes(y = PROPDMGVAL, color="Property Damage")) + 
+    geom_point(aes(y=CROPDMGVAL, color="Crop Damage")) + 
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    ylab("Damages in Billions") +
+    xlab("Event Type") +
+    ggtitle("Events causing greatest economic consequences")
+g
+```
